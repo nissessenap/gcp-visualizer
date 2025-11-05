@@ -213,9 +213,9 @@ func (c *GenerateCmd) Run() error {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] CLI compiles: `go build ./cmd/gcp-visualizer`
-- [ ] All commands are registered: `./gcp-visualizer --help` shows all commands
-- [ ] Command validation works: `./gcp-visualizer generate --format=invalid` fails
+- [x] CLI compiles: `go build ./cmd/gcp-visualizer`
+- [x] All commands are registered: `./gcp-visualizer --help` shows all commands
+- [x] Command validation works: `./gcp-visualizer generate --format=invalid` fails
 
 #### Manual Verification:
 - [ ] Help text is clear and comprehensive
