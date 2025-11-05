@@ -9,7 +9,7 @@ tags: [research, architecture, gcp, visualization, pub-sub, service-accounts, gr
 status: complete
 last_updated: 2025-11-05
 last_updated_by: Claude
-last_updated_note: "Added follow-up research on Graphviz capabilities, frontend options, data persistence, and IAM binding levels"
+last_updated_note: "Corrected scale assumptions (10K total resources, not per-project), removed unnecessary in-memory cache, split MVP into Part 1 (Pub/Sub only) and Part 2 (IAM)"
 ---
 
 # Research: GCP Resource Visualizer MVP Architecture Decisions
@@ -1248,6 +1248,248 @@ gcp-visualizer scan --projects X --impersonate-sa [email protected]
     │  cross-project.svg            │
     └───────────────────────────────┘
 ```
+
+---
+
+## Follow-up Research [2025-11-05 21:48]
+
+### Critical Corrections to Scale and Architecture
+
+Based on user clarifications, the initial assumptions about scale and caching strategy were incorrect.
+
+#### Corrected Scale Understanding
+
+**Initial (Incorrect) Assumption**:
+- Each project has 1000 resources
+- 40 projects × 1000 = 40,000 total resources
+
+**Actual Scale**:
+- **10,000 total resources across ALL 40 projects**
+- Average ~250 resources per project
+- This includes IAM bindings, which are a small subset
+
+**Impact on Architecture**:
+- ✅ Graphviz FDP can handle 10,000 nodes efficiently (30-60 seconds render time)
+- ✅ Single visualization with all projects is feasible
+- ✅ Static SVG is viable for MVP
+- ✅ Interactive HTML (Cytoscape.js/Vis.js) is practical for future
+
+#### In-Memory Cache is Unnecessary
+
+**User's insight**: During a scan operation, each resource is queried exactly once. There's no repeated querying of the same resource within a single scan.
+
+**Query pattern**:
+```
+For each project:
+  1. ListTopics() → returns all topics (1 API call)
+  2. ListSubscriptions() → returns all subscriptions (1 API call)
+  3. For each subscription: GetConfig() → query once (N API calls)
+```
+
+**Revised architecture** (no in-memory cache):
+```
+Scan Phase:
+  GCP APIs → SQLite (direct write)
+
+Generate Phase:
+  SQLite → Graph Builder → Graphviz → SVG/HTML
+```
+
+**What was removed**:
+- ❌ `github.com/patrickmn/go-cache` - not needed
+- ❌ In-memory caching layer
+- ❌ Cache hit/miss logic
+
+**What remains**:
+- ✅ SQLite as persistent storage between CLI runs
+- ✅ Rate limiting for API calls
+- ✅ Clear separation: scan (fetch) vs generate (visualize)
+
+#### Revised Tech Stack
+
+**Required**:
+- CLI Framework: `github.com/alecthomas/kong`
+- Database: `modernc.org/sqlite` (pure Go)
+- Visualization: `github.com/goccy/go-graphviz`
+- Rate Limiting: `golang.org/x/time/rate`
+- GCP SDK: `cloud.google.com/go/pubsub`
+- Cross-platform: `github.com/adrg/xdg`
+- Config: `gopkg.in/yaml.v3`
+
+**Removed from initial recommendation**:
+- ~~`github.com/patrickmn/go-cache`~~ (unnecessary)
+
+#### MVP Split into Two Parts
+
+Based on user feedback, the MVP should be built in two clear phases:
+
+**MVP Part 1: Pub/Sub Visualization Only** (2-3 weeks)
+
+Scope:
+- ✅ Pub/Sub topics
+- ✅ Pub/Sub subscriptions
+- ✅ Cross-project relationships (subscription in project2 → topic in project1)
+- ❌ NO service accounts
+- ❌ NO IAM bindings
+
+Benefits:
+- Simpler data model
+- Faster to implement
+- Validates visualization approach
+- Demonstrates value immediately
+
+Database schema:
+```sql
+CREATE TABLE projects (
+    project_id TEXT PRIMARY KEY,
+    last_synced TIMESTAMP
+);
+
+CREATE TABLE topics (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    full_resource_name TEXT UNIQUE,
+    last_synced TIMESTAMP
+);
+
+CREATE TABLE subscriptions (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    topic_full_resource_name TEXT NOT NULL,  -- may reference different project
+    full_resource_name TEXT UNIQUE,
+    last_synced TIMESTAMP
+);
+
+CREATE INDEX idx_subs_topic ON subscriptions(topic_full_resource_name);
+```
+
+**MVP Part 2: Add IAM Bindings** (2-3 weeks, after Part 1)
+
+Additional scope:
+- ✅ Service accounts
+- ✅ IAM bindings (which SAs can publish/subscribe)
+- ✅ Visualize SA → Topic → Subscription flows
+
+Additional tables:
+```sql
+CREATE TABLE service_accounts (
+    id INTEGER PRIMARY KEY,
+    email TEXT UNIQUE,
+    project_id TEXT NOT NULL,
+    display_name TEXT,
+    last_synced TIMESTAMP
+);
+
+CREATE TABLE iam_bindings (
+    id INTEGER PRIMARY KEY,
+    resource_type TEXT NOT NULL,  -- 'topic' or 'subscription'
+    resource_name TEXT NOT NULL,
+    service_account_email TEXT NOT NULL,
+    role TEXT NOT NULL,  -- roles/pubsub.publisher, roles/pubsub.subscriber
+    last_synced TIMESTAMP
+);
+```
+
+#### Revised Performance Estimates
+
+With 10,000 resources across 40 projects (~250 per project):
+
+**Scan Phase**:
+- 40 projects × 2 API calls (topics + subscriptions) = 80 calls
+- ~250 subscriptions per project × GetConfig() = 10,000 calls total
+- At 400 req/min quota = **~25 minutes** (main bottleneck)
+- Can parallelize across projects to reduce wall-clock time
+
+**Generate Phase**:
+- Read 10,000 records from SQLite: ~1 second
+- Build graph structure: ~1 second
+- Graphviz FDP rendering: **30-60 seconds**
+- Total: **~1 minute**
+
+**Total MVP workflow**: 5-10 minutes scan + 1 minute generate = **acceptable**
+
+#### Simplified Architecture Diagram
+
+```
+MVP Part 1: Pub/Sub Only
+
+┌──────────────────────────────┐
+│   gcp-visualizer scan        │
+│   --projects p1,p2,p3        │
+└──────────┬───────────────────┘
+           │
+    ┌──────▼─────────────┐
+    │  GCP Pub/Sub API   │
+    │  - ListTopics()    │
+    │  - ListSubs()      │
+    │  - GetConfig()     │
+    └──────┬─────────────┘
+           │ (direct write)
+    ┌──────▼─────────────┐
+    │     SQLite         │
+    │  - topics          │
+    │  - subscriptions   │
+    └──────┬─────────────┘
+           │
+┌──────────▼───────────────────┐
+│   gcp-visualizer generate    │
+│   --output diagram.svg       │
+└──────────┬───────────────────┘
+           │
+    ┌──────▼─────────────┐
+    │  Graph Builder     │
+    │  (in-memory)       │
+    └──────┬─────────────┘
+           │
+    ┌──────▼─────────────┐
+    │  Graphviz FDP      │
+    │  (project clusters)│
+    └──────┬─────────────┘
+           │
+    ┌──────▼─────────────┐
+    │  Output: SVG/HTML  │
+    └────────────────────┘
+```
+
+**Key Simplifications**:
+1. No in-memory cache layer
+2. Direct GCP APIs → SQLite → Visualization
+3. Two-step CLI: `scan` then `generate`
+4. SQLite is the only persistent storage
+
+#### Filtering Strategy
+
+Since total resources are manageable (10K), support filtering at visualization time:
+
+```bash
+# Full visualization
+gcp-visualizer generate --output all-projects.svg
+
+# Filter by projects
+gcp-visualizer generate --projects project1,project2 --output filtered.svg
+
+# Filter by resource type (future)
+gcp-visualizer generate --resource-types topics --output topics-only.svg
+
+# Filter by service account (Part 2)
+gcp-visualizer generate --service-account [email protected] --output sa-view.svg
+```
+
+This allows:
+- Scan once (25 minutes for 40 projects)
+- Generate many different views (1 minute each)
+- Iterate on visualization without re-scanning
+
+### Summary of Corrections
+
+1. **Scale**: 10,000 total resources (not per project) - much more manageable
+2. **Caching**: No in-memory cache needed - each resource queried once per scan
+3. **Storage**: SQLite only - simpler architecture
+4. **MVP Scope**: Split into Part 1 (Pub/Sub) and Part 2 (IAM) for incremental delivery
+5. **Performance**: 25min scan + 1min generate = acceptable for 40 projects
+6. **Visualization**: Single 10K node graph is feasible with Graphviz FDP
 
 ## Related Research
 
