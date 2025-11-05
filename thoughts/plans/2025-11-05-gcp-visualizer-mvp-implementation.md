@@ -12,6 +12,16 @@ This is a greenfield project with:
 - Key technical decisions made (FDP layout engine, SQLite storage, no in-memory cache)
 - Clear two-part MVP scope defined
 
+## Testing Approach
+
+**TDD (Test-Driven Development)** will be used throughout implementation where reasonable:
+
+- **Use testify** for all tests: `github.com/stretchr/testify/assert`, `require`, and `mock`
+- **Write tests first** for business logic (Phases 1-7, 10-13)
+- **In-memory SQLite** (`:memory:`) for fast integration tests - no Docker needed
+- **Storage interface** to enable future PostgreSQL migration without significant refactoring
+- **Phases 8-9 (Graphviz)**: Focus on output validation rather than strict TDD due to rendering complexity
+
 ## Desired End State
 
 A production-ready CLI tool that:
@@ -73,8 +83,9 @@ go get modernc.org/sqlite
 go get github.com/goccy/go-graphviz
 go get cloud.google.com/go/pubsub
 go get golang.org/x/time/rate
-go get github.com/adrg/xdg
 go get gopkg.in/yaml.v3
+go get github.com/kelseyhightower/envconfig
+go get github.com/stretchr/testify
 ```
 
 #### 3. Main Entry Point
@@ -105,17 +116,22 @@ build:
 	go build -o gcp-visualizer cmd/gcp-visualizer/main.go
 
 test:
-	go test ./...
+	go test -v ./...
+
+test-coverage:
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out
 
 lint:
 	golangci-lint run
 
 clean:
 	rm -f gcp-visualizer
-	rm -f ~/.cache/gcp-visualizer/*.db
+	rm -f coverage.out
+	rm -rf /tmp/gcp-visualizer-*
 
 install: build
-	mv gcp-visualizer $(GOPATH)/bin/
+	cp gcp-visualizer $(GOPATH)/bin/
 ```
 
 ### Success Criteria:
@@ -211,7 +227,7 @@ func (c *GenerateCmd) Run() error {
 ## Phase 3: Configuration Management
 
 ### Overview
-Implement YAML configuration with layered settings and cross-platform file locations.
+Implement YAML configuration with environment variable overrides and Linux-only file locations.
 
 ### Changes Required:
 
@@ -222,43 +238,81 @@ Implement YAML configuration with layered settings and cross-platform file locat
 package config
 
 import (
-    "github.com/adrg/xdg"
+    "os"
+    "path/filepath"
     "gopkg.in/yaml.v3"
+    "github.com/kelseyhightower/envconfig"
 )
 
 type Config struct {
-    OrganizationID string   `yaml:"organization_id"`
-    Projects       []string `yaml:"projects"`
+    OrganizationID string   `yaml:"organization_id" envconfig:"ORGANIZATION_ID"`
+    Projects       []string `yaml:"projects" envconfig:"PROJECTS"`
     Cache          Cache    `yaml:"cache"`
     Visualization  Visual   `yaml:"visualization"`
     RateLimits     Limits   `yaml:"rate_limits"`
 }
 
 type Cache struct {
-    TTLHours    int `yaml:"ttl_hours"`
-    MaxAgeHours int `yaml:"max_age_hours"`
+    TTLHours    int `yaml:"ttl_hours" envconfig:"CACHE_TTL_HOURS"`
+    MaxAgeHours int `yaml:"max_age_hours" envconfig:"CACHE_MAX_AGE_HOURS"`
 }
 
 type Visual struct {
-    Layout         string `yaml:"layout"`
-    OutputFormat   string `yaml:"output_format"`
-    IncludeIcons   bool   `yaml:"include_icons"`
-    ShowIAMDetails bool   `yaml:"show_iam_details"`
+    Layout         string `yaml:"layout" envconfig:"LAYOUT"`
+    OutputFormat   string `yaml:"output_format" envconfig:"OUTPUT_FORMAT"`
+    IncludeIcons   bool   `yaml:"include_icons" envconfig:"INCLUDE_ICONS"`
+    ShowIAMDetails bool   `yaml:"show_iam_details" envconfig:"SHOW_IAM_DETAILS"`
 }
 
 type Limits struct {
-    RequestsPerSecond float64 `yaml:"requests_per_second"`
-    MaxConcurrent     int     `yaml:"max_concurrent"`
+    RequestsPerSecond float64 `yaml:"requests_per_second" envconfig:"REQUESTS_PER_SECOND"`
+    MaxConcurrent     int     `yaml:"max_concurrent" envconfig:"MAX_CONCURRENT"`
+}
+
+// ConfigPath returns the configuration file path
+// Default: ~/.config/gcp-visualizer/config.yaml
+func ConfigPath() string {
+    if path := os.Getenv("GCP_VISUALIZER_CONFIG"); path != "" {
+        return path
+    }
+    home, _ := os.UserHomeDir()
+    return filepath.Join(home, ".config", "gcp-visualizer", "config.yaml")
 }
 
 func Load() (*Config, error) {
-    configPath, _ := xdg.ConfigFile("gcp-visualizer/config.yaml")
-    // Load and parse YAML
+    cfg := DefaultConfig()
+
+    // Load from YAML file if exists
+    configPath := ConfigPath()
+    if data, err := os.ReadFile(configPath); err == nil {
+        if err := yaml.Unmarshal(data, cfg); err != nil {
+            return nil, err
+        }
+    }
+
+    // Override with environment variables
+    if err := envconfig.Process("GCP_VISUALIZER", cfg); err != nil {
+        return nil, err
+    }
+
+    return cfg, nil
 }
 
 func (c *Config) Save() error {
-    configPath, _ := xdg.ConfigFile("gcp-visualizer/config.yaml")
-    // Marshal and save YAML
+    configPath := ConfigPath()
+
+    // Create directory if not exists
+    dir := filepath.Dir(configPath)
+    if err := os.MkdirAll(dir, 0755); err != nil {
+        return err
+    }
+
+    data, err := yaml.Marshal(c)
+    if err != nil {
+        return err
+    }
+
+    return os.WriteFile(configPath, data, 0644)
 }
 ```
 
@@ -284,16 +338,45 @@ func DefaultConfig() *Config {
 }
 ```
 
+#### 3. Config Tests
+**File**: `internal/config/config_test.go`
+
+```go
+package config
+
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestDefaultConfig(t *testing.T) {
+    cfg := DefaultConfig()
+    assert.Equal(t, "fdp", cfg.Visualization.Layout)
+    assert.Equal(t, 10.0, cfg.RateLimits.RequestsPerSecond)
+}
+
+func TestLoadConfig(t *testing.T) {
+    // Test loading from file and env vars
+}
+
+func TestConfigPrecedence(t *testing.T) {
+    // Test: env vars override YAML, CLI flags override all
+}
+```
+
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Config loads from file: `go test ./internal/config`
+- [ ] Config tests pass: `go test ./internal/config`
 - [ ] Default config is valid: `go test -run TestDefaultConfig`
-- [ ] Config merging works (CLI overrides file)
+- [ ] Environment variables override YAML config
+- [ ] Config precedence: defaults < YAML < env vars < CLI flags
 
 #### Manual Verification:
-- [ ] Config file created in correct location per OS
-- [ ] CLI flags override config file values
+- [ ] Config file created at `~/.config/gcp-visualizer/config.yaml`
+- [ ] Can override config via `GCP_VISUALIZER_PROJECTS` env var
+- [ ] CLI flags override all other config sources
 - [ ] Invalid config produces clear errors
 
 ---
@@ -301,29 +384,88 @@ func DefaultConfig() *Config {
 ## Phase 4: SQLite Storage Layer
 
 ### Overview
-Implement SQLite database with schema for Pub/Sub resources.
+Implement SQLite database with schema for Pub/Sub resources. Use Storage interface for future PostgreSQL migration.
 
 ### Changes Required:
 
-#### 1. Database Connection
-**File**: `internal/storage/storage.go`
+#### 1. Storage Interface
+**File**: `internal/storage/interface.go`
+
+```go
+package storage
+
+import "context"
+
+// Store defines the interface for all storage operations
+// This allows swapping SQLite for PostgreSQL in the future
+type Store interface {
+    // Topics
+    SaveTopic(ctx context.Context, topic *Topic) error
+    GetTopics(ctx context.Context, projectID string) ([]*Topic, error)
+    GetAllTopics(ctx context.Context, projects []string) ([]*Topic, error)
+
+    // Subscriptions
+    SaveSubscription(ctx context.Context, sub *Subscription) error
+    GetSubscriptions(ctx context.Context, projectID string) ([]*Subscription, error)
+    GetAllSubscriptions(ctx context.Context, projects []string) ([]*Subscription, error)
+
+    // Projects
+    GetAllProjects(ctx context.Context) ([]string, error)
+    UpdateProjectSyncTime(ctx context.Context, projectID string) error
+
+    // Lifecycle
+    Close() error
+}
+
+// Topic represents a Pub/Sub topic
+type Topic struct {
+    ID               int64
+    Name             string
+    ProjectID        string
+    FullResourceName string
+    Metadata         string // JSON
+}
+
+// Subscription represents a Pub/Sub subscription
+type Subscription struct {
+    ID                    int64
+    Name                  string
+    ProjectID             string
+    TopicFullResourceName string
+    FullResourceName      string
+    Metadata              string // JSON
+}
+```
+
+#### 2. SQLite Implementation
+**File**: `internal/storage/sqlite.go`
 
 ```go
 package storage
 
 import (
+    "context"
     "database/sql"
+    "os"
+    "path/filepath"
     _ "modernc.org/sqlite"
-    "github.com/adrg/xdg"
 )
 
-type Storage struct {
-    db      *sql.DB
-    limiter *rate.Limiter
+type SQLiteStorage struct {
+    db *sql.DB
 }
 
-func New() (*Storage, error) {
-    dbPath, _ := xdg.CacheFile("gcp-visualizer/cache.db")
+// NewSQLite creates a new SQLite storage backend
+// For production: uses /tmp/gcp-visualizer/cache.db
+// For testing: use ":memory:" as dbPath
+func NewSQLite(dbPath string) (*SQLiteStorage, error) {
+    // Create directory for file-based databases
+    if dbPath != ":memory:" {
+        dir := filepath.Dir(dbPath)
+        if err := os.MkdirAll(dir, 0755); err != nil {
+            return nil, err
+        }
+    }
 
     db, err := sql.Open("sqlite", dbPath)
     if err != nil {
@@ -331,23 +473,33 @@ func New() (*Storage, error) {
     }
 
     // Set pragmas for performance
-    db.Exec("PRAGMA journal_mode=WAL")
-    db.Exec("PRAGMA synchronous=NORMAL")
-
-    s := &Storage{
-        db:      db,
-        limiter: rate.NewLimiter(rate.Limit(10), 20),
+    if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+        return nil, err
+    }
+    if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+        return nil, err
     }
 
+    s := &SQLiteStorage{db: db}
     return s, s.migrate()
+}
+
+// NewDefaultSQLite creates storage in /tmp/gcp-visualizer/
+func NewDefaultSQLite() (*SQLiteStorage, error) {
+    dbPath := filepath.Join("/tmp", "gcp-visualizer", "cache.db")
+    return NewSQLite(dbPath)
+}
+
+func (s *SQLiteStorage) Close() error {
+    return s.db.Close()
 }
 ```
 
-#### 2. Database Schema
+#### 3. Database Schema
 **File**: `internal/storage/migrations.go`
 
 ```go
-func (s *Storage) migrate() error {
+func (s *SQLiteStorage) migrate() error {
     schema := `
     CREATE TABLE IF NOT EXISTS projects (
         project_id TEXT PRIMARY KEY,
@@ -386,45 +538,122 @@ func (s *Storage) migrate() error {
 }
 ```
 
-#### 3. Basic CRUD Operations
-**File**: `internal/storage/operations.go`
+#### 4. CRUD Operations (TDD)
+**File**: `internal/storage/sqlite_test.go` (write first!)
 
 ```go
-func (s *Storage) SaveTopic(topic *Topic) error {
+package storage
+
+import (
+    "context"
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func setupTestStorage(t *testing.T) Store {
+    store, err := NewSQLite(":memory:")
+    require.NoError(t, err)
+    t.Cleanup(func() { store.Close() })
+    return store
+}
+
+func TestSaveAndGetTopic(t *testing.T) {
+    store := setupTestStorage(t)
+    ctx := context.Background()
+
+    topic := &Topic{
+        Name:             "test-topic",
+        ProjectID:        "test-project",
+        FullResourceName: "projects/test-project/topics/test-topic",
+        Metadata:         `{"labels": {}}`,
+    }
+
+    err := store.SaveTopic(ctx, topic)
+    require.NoError(t, err)
+
+    topics, err := store.GetTopics(ctx, "test-project")
+    require.NoError(t, err)
+    assert.Len(t, topics, 1)
+    assert.Equal(t, "test-topic", topics[0].Name)
+}
+
+func TestSaveSubscription(t *testing.T) {
+    store := setupTestStorage(t)
+    ctx := context.Background()
+
+    sub := &Subscription{
+        Name:                  "test-sub",
+        ProjectID:             "test-project",
+        TopicFullResourceName: "projects/test-project/topics/test-topic",
+        FullResourceName:      "projects/test-project/subscriptions/test-sub",
+    }
+
+    err := store.SaveSubscription(ctx, sub)
+    require.NoError(t, err)
+
+    subs, err := store.GetSubscriptions(ctx, "test-project")
+    require.NoError(t, err)
+    assert.Len(t, subs, 1)
+}
+```
+
+**File**: `internal/storage/operations.go` (implement after tests)
+
+```go
+func (s *SQLiteStorage) SaveTopic(ctx context.Context, topic *Topic) error {
     query := `
         INSERT OR REPLACE INTO topics
         (name, project_id, full_resource_name, metadata, last_synced)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
-    _, err := s.db.Exec(query, topic.Name, topic.ProjectID,
-                         topic.FullResourceName, topic.Metadata)
+    _, err := s.db.ExecContext(ctx, query, topic.Name, topic.ProjectID,
+                                topic.FullResourceName, topic.Metadata)
     return err
 }
 
-func (s *Storage) GetTopics(projectID string) ([]*Topic, error) {
-    query := `SELECT * FROM topics WHERE project_id = ?`
-    // Query and scan results
+func (s *SQLiteStorage) GetTopics(ctx context.Context, projectID string) ([]*Topic, error) {
+    query := `SELECT id, name, project_id, full_resource_name, metadata FROM topics WHERE project_id = ?`
+    rows, err := s.db.QueryContext(ctx, query, projectID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var topics []*Topic
+    for rows.Next() {
+        t := &Topic{}
+        if err := rows.Scan(&t.ID, &t.Name, &t.ProjectID, &t.FullResourceName, &t.Metadata); err != nil {
+            return nil, err
+        }
+        topics = append(topics, t)
+    }
+    return topics, rows.Err()
 }
+
+// Implement remaining Store interface methods...
 ```
 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Database creates successfully: `go test ./internal/storage`
-- [ ] Migrations run without errors
-- [ ] CRUD operations work: `go test -run TestCRUD`
+- [ ] Storage tests pass: `go test ./internal/storage`
+- [ ] In-memory database works for tests
+- [ ] CRUD operations work: `go test -run TestSaveAndGetTopic`
 - [ ] Indexes are created correctly
+- [ ] Store interface fully implemented
 
 #### Manual Verification:
-- [ ] Database file created in correct cache directory
+- [ ] Database file created at `/tmp/gcp-visualizer/cache.db`
 - [ ] Can query database with sqlite3 CLI tool
 - [ ] Schema matches design from research
+- [ ] WAL mode enabled for concurrent access
 
 ---
 
 ## Phase 5: GCP Authentication
 
 ### Overview
-Implement multiple authentication methods: ADC, service account keys, and impersonation.
+Implement GCP authentication using Application Default Credentials (ADC) only for MVP simplicity.
 
 ### Changes Required:
 
@@ -437,43 +666,46 @@ package auth
 import (
     "context"
     "cloud.google.com/go/pubsub"
-    "google.golang.org/api/option"
 )
 
-type AuthConfig struct {
-    Method           string // "adc", "key", "impersonate"
-    ServiceAccountKey string
-    ImpersonateEmail string
-}
-
-func NewClient(ctx context.Context, projectID string, config AuthConfig) (*pubsub.Client, error) {
-    var opts []option.ClientOption
-
-    switch config.Method {
-    case "key":
-        opts = append(opts, option.WithCredentialsFile(config.ServiceAccountKey))
-    case "impersonate":
-        // Setup impersonation
-    default:
-        // Use ADC (default)
-    }
-
-    return pubsub.NewClient(ctx, projectID, opts...)
+// NewPubSubClient creates a Pub/Sub client using Application Default Credentials
+// Users must run: gcloud auth application-default login
+func NewPubSubClient(ctx context.Context, projectID string) (*pubsub.Client, error) {
+    // Uses Application Default Credentials automatically
+    return pubsub.NewClient(ctx, projectID)
 }
 ```
 
-#### 2. CLI Integration
-**File**: `internal/cli/cli.go` (update)
+#### 2. Auth Tests (TDD)
+**File**: `internal/auth/auth_test.go`
 
 ```go
-type GlobalFlags struct {
-    SAKeyFile    string `help:"Service account key file"`
-    ImpersonateSA string `help:"Service account to impersonate"`
-}
+package auth
 
-type CLI struct {
-    GlobalFlags
-    // ... existing commands
+import (
+    "context"
+    "testing"
+    "github.com/stretchr/testify/require"
+)
+
+func TestNewPubSubClient(t *testing.T) {
+    // Note: This test requires valid GCP credentials
+    // Skip in CI unless credentials are configured
+    if testing.Short() {
+        t.Skip("Skipping integration test")
+    }
+
+    ctx := context.Background()
+    client, err := NewPubSubClient(ctx, "test-project")
+
+    // Should fail gracefully if no credentials
+    if err != nil {
+        require.Contains(t, err.Error(), "credentials",
+            "Error should mention credentials")
+    } else {
+        require.NotNil(t, client)
+        defer client.Close()
+    }
 }
 ```
 
@@ -482,11 +714,12 @@ type CLI struct {
 #### Automated Verification:
 - [ ] Auth package compiles: `go build ./internal/auth`
 - [ ] Unit tests pass: `go test ./internal/auth`
+- [ ] Clear error when ADC not configured
 
 #### Manual Verification:
 - [ ] Can authenticate with ADC: `gcloud auth application-default login` then run tool
-- [ ] Can use service account key file
-- [ ] Clear error messages for auth failures
+- [ ] Clear error message if ADC not configured
+- [ ] Error message guides user to run `gcloud auth application-default login`
 
 ---
 
