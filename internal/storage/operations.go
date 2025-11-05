@@ -13,7 +13,7 @@ func (s *SQLiteStorage) SaveTopic(ctx context.Context, topic *Topic) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Ensure project exists in projects table
 	projectQuery := `
@@ -49,7 +49,7 @@ func (s *SQLiteStorage) GetTopics(ctx context.Context, projectID string) ([]*Top
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var topics []*Topic
 	for rows.Next() {
@@ -71,7 +71,7 @@ func (s *SQLiteStorage) GetAllTopics(ctx context.Context, projects []string) ([]
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		return scanTopics(rows)
 	}
@@ -93,7 +93,7 @@ func (s *SQLiteStorage) GetAllTopics(ctx context.Context, projects []string) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanTopics(rows)
 }
@@ -105,7 +105,7 @@ func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Ensure project exists in projects table
 	projectQuery := `
@@ -142,7 +142,7 @@ func (s *SQLiteStorage) GetSubscriptions(ctx context.Context, projectID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSubscriptions(rows)
 }
@@ -157,7 +157,7 @@ func (s *SQLiteStorage) GetAllSubscriptions(ctx context.Context, projects []stri
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		return scanSubscriptions(rows)
 	}
@@ -179,7 +179,7 @@ func (s *SQLiteStorage) GetAllSubscriptions(ctx context.Context, projects []stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSubscriptions(rows)
 }
@@ -192,7 +192,7 @@ func (s *SQLiteStorage) GetAllProjects(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var projects []string
 	for rows.Next() {

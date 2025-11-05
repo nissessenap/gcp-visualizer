@@ -11,7 +11,7 @@ import (
 func setupTestStorage(t *testing.T) Store {
 	store, err := NewSQLite(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 

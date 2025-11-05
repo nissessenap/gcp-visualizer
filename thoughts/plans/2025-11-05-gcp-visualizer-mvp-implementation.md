@@ -636,17 +636,17 @@ func (s *SQLiteStorage) GetTopics(ctx context.Context, projectID string) ([]*Top
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Storage tests pass: `go test ./internal/storage`
-- [ ] In-memory database works for tests
-- [ ] CRUD operations work: `go test -run TestSaveAndGetTopic`
-- [ ] Indexes are created correctly
-- [ ] Store interface fully implemented
+- [x] Storage tests pass: `go test ./internal/storage`
+- [x] In-memory database works for tests
+- [x] CRUD operations work: `go test -run TestSaveAndGetTopic`
+- [x] Indexes are created correctly
+- [x] Store interface fully implemented
 
 #### Manual Verification:
-- [ ] Database file created at `/tmp/gcp-visualizer/cache.db`
-- [ ] Can query database with sqlite3 CLI tool
-- [ ] Schema matches design from research
-- [ ] WAL mode enabled for concurrent access
+- [x] Database file created at `/tmp/gcp-visualizer/cache.db`
+- [x] Can query database with sqlite3 CLI tool
+- [x] Schema matches design from research
+- [x] WAL mode enabled for concurrent access
 
 ---
 
