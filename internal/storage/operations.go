@@ -13,13 +13,17 @@ func (s *SQLiteStorage) SaveTopic(ctx context.Context, topic *Topic) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Ensure project exists in projects table
 	projectQuery := `
         INSERT OR REPLACE INTO projects (project_id, last_synced)
         VALUES (?, CURRENT_TIMESTAMP)`
-	if _, err := tx.ExecContext(ctx, projectQuery, topic.ProjectID); err != nil {
+	if _, err = tx.ExecContext(ctx, projectQuery, topic.ProjectID); err != nil {
 		return err
 	}
 
@@ -28,7 +32,7 @@ func (s *SQLiteStorage) SaveTopic(ctx context.Context, topic *Topic) error {
         INSERT OR REPLACE INTO topics
         (name, project_id, full_resource_name, metadata, last_synced)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
-	if _, err := tx.ExecContext(ctx, topicQuery,
+	if _, err = tx.ExecContext(ctx, topicQuery,
 		topic.Name,
 		topic.ProjectID,
 		topic.FullResourceName,
@@ -36,7 +40,8 @@ func (s *SQLiteStorage) SaveTopic(ctx context.Context, topic *Topic) error {
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	return err
 }
 
 // GetTopics retrieves all topics for a specific project
@@ -76,18 +81,12 @@ func (s *SQLiteStorage) GetAllTopics(ctx context.Context, projects []string) ([]
 		return scanTopics(rows)
 	}
 
-	// Build query with placeholders for projects
-	placeholders := make([]string, len(projects))
-	args := make([]interface{}, len(projects))
-	for i, p := range projects {
-		placeholders[i] = "?"
-		args[i] = p
-	}
-
+	// Build parameterized IN clause - safe from SQL injection as we use placeholders
+	// and pass values separately via args
+	inClause, args := buildInClause(projects)
 	query := fmt.Sprintf(`SELECT id, name, project_id, full_resource_name, metadata
                            FROM topics
-                           WHERE project_id IN (%s)`,
-		strings.Join(placeholders, ","))
+                           WHERE project_id IN (%s)`, inClause)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -105,13 +104,17 @@ func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Ensure project exists in projects table
 	projectQuery := `
         INSERT OR REPLACE INTO projects (project_id, last_synced)
         VALUES (?, CURRENT_TIMESTAMP)`
-	if _, err := tx.ExecContext(ctx, projectQuery, sub.ProjectID); err != nil {
+	if _, err = tx.ExecContext(ctx, projectQuery, sub.ProjectID); err != nil {
 		return err
 	}
 
@@ -120,7 +123,7 @@ func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription)
         INSERT OR REPLACE INTO subscriptions
         (name, project_id, topic_full_resource_name, full_resource_name, metadata, last_synced)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-	if _, err := tx.ExecContext(ctx, subscriptionQuery,
+	if _, err = tx.ExecContext(ctx, subscriptionQuery,
 		sub.Name,
 		sub.ProjectID,
 		sub.TopicFullResourceName,
@@ -129,7 +132,8 @@ func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription)
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	return err
 }
 
 // GetSubscriptions retrieves all subscriptions for a specific project
@@ -162,18 +166,12 @@ func (s *SQLiteStorage) GetAllSubscriptions(ctx context.Context, projects []stri
 		return scanSubscriptions(rows)
 	}
 
-	// Build query with placeholders for projects
-	placeholders := make([]string, len(projects))
-	args := make([]interface{}, len(projects))
-	for i, p := range projects {
-		placeholders[i] = "?"
-		args[i] = p
-	}
-
+	// Build parameterized IN clause - safe from SQL injection as we use placeholders
+	// and pass values separately via args
+	inClause, args := buildInClause(projects)
 	query := fmt.Sprintf(`SELECT id, name, project_id, topic_full_resource_name, full_resource_name, metadata
                            FROM subscriptions
-                           WHERE project_id IN (%s)`,
-		strings.Join(placeholders, ","))
+                           WHERE project_id IN (%s)`, inClause)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -247,4 +245,17 @@ func scanSubscriptions(rows interface {
 		subscriptions = append(subscriptions, s)
 	}
 	return subscriptions, rows.Err()
+}
+
+// buildInClause creates a parameterized IN clause for SQL queries.
+// Returns the placeholder string (e.g., "?,?,?") and the args slice.
+// This prevents SQL injection by using proper parameterization.
+func buildInClause(values []string) (string, []interface{}) {
+	placeholders := make([]string, len(values))
+	args := make([]interface{}, len(values))
+	for i, v := range values {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+	return strings.Join(placeholders, ","), args
 }
