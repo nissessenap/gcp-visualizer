@@ -368,10 +368,10 @@ func TestConfigPrecedence(t *testing.T) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Config tests pass: `go test ./internal/config`
-- [ ] Default config is valid: `go test -run TestDefaultConfig`
-- [ ] Environment variables override YAML config
-- [ ] Config precedence: defaults < YAML < env vars < CLI flags
+- [x] Config tests pass: `go test ./internal/config`
+- [x] Default config is valid: `go test -run TestDefaultConfig`
+- [x] Environment variables override YAML config
+- [x] Config precedence: defaults < YAML < env vars < CLI flags
 
 #### Manual Verification:
 - [ ] Config file created at `~/.config/gcp-visualizer/config.yaml`
