@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -57,7 +58,10 @@ func (c *Collector) getClient(ctx context.Context, projectID string) (*pubsub.Cl
 	if existingClient, exists := c.clients[projectID]; exists {
 		// Another goroutine won the race and stored their client first
 		// Close our client to avoid resource leak and return the existing one
-		_ = newClient.Close()
+		if err := newClient.Close(); err != nil {
+			// Log but don't fail - we still have a working client from the other goroutine
+			log.Printf("Warning: failed to close duplicate client for project %s: %v", projectID, err)
+		}
 		return existingClient, nil
 	}
 
