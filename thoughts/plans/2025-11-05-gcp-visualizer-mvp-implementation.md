@@ -955,9 +955,9 @@ func retryWithBackoff(ctx context.Context, fn func() error) error {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Rate limiting works: `go test -run TestRateLimit`
-- [ ] Retry logic handles transient errors
-- [ ] Concurrent collection with semaphore
+- [x] Rate limiting works: `go test -run TestRateLimit`
+- [x] Retry logic handles transient errors
+- [x] Concurrent collection with semaphore
 
 #### Manual Verification:
 - [ ] Can scan 40 projects without hitting quota limits
