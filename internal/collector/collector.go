@@ -30,6 +30,7 @@ func New(store storage.Store, requestsPerSecond float64) *Collector {
 
 // getClient returns a cached client for the project, or creates a new one.
 // This method is thread-safe and uses double-checked locking for optimal performance.
+// The client creation I/O operation happens outside the lock to avoid blocking other goroutines.
 func (c *Collector) getClient(ctx context.Context, projectID string) (*pubsub.Client, error) {
 	// First check with read lock (fast path for existing clients)
 	c.mu.RLock()
@@ -39,23 +40,29 @@ func (c *Collector) getClient(ctx context.Context, projectID string) (*pubsub.Cl
 		return client, nil
 	}
 
-	// Acquire write lock to create new client
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check: another goroutine might have created the client while we waited
-	if client, exists := c.clients[projectID]; exists {
-		return client, nil
-	}
-
-	// Create new client
-	client, err := auth.NewPubSubClient(ctx, projectID)
+	// Create new client WITHOUT holding the lock
+	// This allows other goroutines to proceed with their own I/O operations concurrently
+	newClient, err := auth.NewPubSubClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pubsub client for project %s: %w", projectID, err)
 	}
 
-	c.clients[projectID] = client
-	return client, nil
+	// Acquire write lock only to store the client in the map
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Double-check: another goroutine might have created and stored a client
+	// while we were creating ours (race condition handling)
+	if existingClient, exists := c.clients[projectID]; exists {
+		// Another goroutine won the race and stored their client first
+		// Close our client to avoid resource leak and return the existing one
+		_ = newClient.Close()
+		return existingClient, nil
+	}
+
+	// We won the race (or there was no race) - store our client
+	c.clients[projectID] = newClient
+	return newClient, nil
 }
 
 // CollectProject collects all Pub/Sub resources from a single project

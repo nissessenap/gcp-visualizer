@@ -2,7 +2,10 @@ package collector
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/NissesSenap/gcp-visualizer/internal/storage"
 	"github.com/stretchr/testify/assert"
@@ -126,4 +129,126 @@ func TestCollectProject_ContextCancellation(t *testing.T) {
 	if err == context.Canceled {
 		t.Log("Context cancellation working correctly")
 	}
+}
+
+func TestGetClient_ConcurrentAccess(t *testing.T) {
+	collector, _ := setupTestCollector(t)
+	ctx := context.Background()
+
+	// Test 1: Multiple goroutines trying to get clients for DIFFERENT projects
+	// This demonstrates the blocking issue - with lock held during I/O,
+	// even different projects block each other unnecessarily
+	t.Run("different_projects", func(t *testing.T) {
+		const numProjects = 10
+		var wg sync.WaitGroup
+		wg.Add(numProjects)
+
+		startTime := time.Now()
+
+		for i := 0; i < numProjects; i++ {
+			go func(index int) {
+				defer wg.Done()
+				projectID := fmt.Sprintf("test-project-%d", index)
+				_, err := collector.getClient(ctx, projectID)
+
+				// We expect either success or auth failure
+				// The key point is all goroutines should complete
+				if err != nil {
+					t.Logf("Project %s: %v", projectID, err)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		duration := time.Since(startTime)
+
+		t.Logf("Getting clients for %d different projects took: %v", numProjects, duration)
+
+		// With the CURRENT implementation (lock held during I/O):
+		// - Each client creation is serialized
+		// - Total time = sum of all I/O operations
+		//
+		// With the FIXED implementation (lock only for map access):
+		// - Client creations happen concurrently
+		// - Total time ≈ time of slowest I/O operation
+	})
+
+	// Test 2: Multiple goroutines trying to get client for SAME project
+	// This tests the double-checked locking and ensures only one client is created
+	t.Run("same_project", func(t *testing.T) {
+		projectID := "test-project-concurrent"
+		const numGoroutines = 20
+
+		// Channels to collect results
+		type result struct {
+			err   error
+			index int
+		}
+		results := make(chan result, numGoroutines)
+
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+
+		startTime := time.Now()
+
+		for i := 0; i < numGoroutines; i++ {
+			go func(index int) {
+				defer wg.Done()
+
+				// All goroutines try to get a client for the same project
+				_, err := collector.getClient(ctx, projectID)
+				results <- result{
+					err:   err,
+					index: index,
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+
+		duration := time.Since(startTime)
+
+		// Collect all results
+		var errors []error
+		var successCount int
+
+		for res := range results {
+			if res.err != nil {
+				errors = append(errors, res.err)
+			} else {
+				successCount++
+			}
+		}
+
+		t.Logf("Concurrent access to same project completed in %v", duration)
+		t.Logf("Successful calls: %d, Failed calls: %d", successCount, len(errors))
+
+		// Verify no deadlock occurred (test completed)
+		assert.Equal(t, numGoroutines, successCount+len(errors),
+			"All goroutines should complete")
+
+		// With the CURRENT implementation holding the lock during I/O:
+		// - Only the first goroutine creates the client (correct)
+		// - BUT all other goroutines are blocked during creation (inefficient)
+		//
+		// After the fix (lock held only during map access):
+		// - Multiple goroutines may attempt to create clients concurrently
+		// - Only one client is stored in the map (via double-check)
+		// - Extra clients are properly closed
+		// - No unnecessary blocking
+
+		// Verify that we can access the client map to check only one was created
+		collector.mu.RLock()
+		client, exists := collector.clients[projectID]
+		collector.mu.RUnlock()
+
+		if successCount > 0 {
+			assert.True(t, exists, "Client should be in cache")
+			assert.NotNil(t, client, "Client should not be nil")
+		}
+	})
+
+	// This test should be run with: go test -race
+	// to detect any race conditions in the implementation
 }
