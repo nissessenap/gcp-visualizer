@@ -211,7 +211,9 @@ func TestRetryWithBackoff_MaxRetriesExceeded(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "max retries exceeded")
+	assert.Contains(t, err.Error(), "max retries")
+	assert.Contains(t, err.Error(), "last error")
+	assert.ErrorIs(t, err, retryableErr, "Should wrap the last error")
 	assert.Equal(t, 3, attempts, "Should attempt exactly 3 times")
 }
 
@@ -249,7 +251,7 @@ func TestRetryWithBackoff_ExponentialBackoff(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "max retries exceeded")
+	assert.Contains(t, err.Error(), "max retries")
 	assert.Equal(t, 3, attempts)
 	require.Len(t, attemptTimes, 3)
 

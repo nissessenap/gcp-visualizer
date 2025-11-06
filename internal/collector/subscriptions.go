@@ -10,13 +10,26 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-// collectSubscriptions collects all subscriptions from a GCP project
+// collectSubscriptions collects all subscriptions from a GCP project with retry logic
+// for transient errors. Retries are performed at the collection level to
+// ensure a fresh iterator is used on each attempt, preventing data loss.
 func (c *Collector) collectSubscriptions(ctx context.Context, client *pubsub.Client, projectID string) error {
+	return retryWithBackoff(ctx, func() error {
+		return c.collectSubscriptionsOnce(ctx, client, projectID)
+	})
+}
+
+// collectSubscriptionsOnce performs a single attempt to collect all subscriptions from a GCP project.
+// This function creates a fresh iterator and iterates through all subscriptions.
+// If any error occurs, it returns immediately to allow the caller to retry
+// with a fresh iterator.
+func (c *Collector) collectSubscriptionsOnce(ctx context.Context, client *pubsub.Client, projectID string) error {
 	// Create list request
 	req := &pubsubpb.ListSubscriptionsRequest{
 		Project: fmt.Sprintf("projects/%s", projectID),
 	}
 
+	// Create fresh iterator for this attempt
 	it := client.SubscriptionAdminClient.ListSubscriptions(ctx, req)
 
 	for {
@@ -25,13 +38,9 @@ func (c *Collector) collectSubscriptions(ctx context.Context, client *pubsub.Cli
 			return fmt.Errorf("rate limiter error: %w", err)
 		}
 
-		// Fetch next subscription with retry logic for transient errors
-		var sub *pubsubpb.Subscription
-		err := retryWithBackoff(ctx, func() error {
-			var iterErr error
-			sub, iterErr = it.Next()
-			return iterErr
-		})
+		// Fetch next subscription - no retry here, errors propagate to trigger
+		// a high-level retry with a fresh iterator
+		sub, err := it.Next()
 
 		if err == iterator.Done {
 			break

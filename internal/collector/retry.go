@@ -26,12 +26,16 @@ import (
 func retryWithBackoff(ctx context.Context, fn func() error) error {
 	backoff := 1 * time.Second
 	maxRetries := 3
+	var lastErr error
 
 	for i := 0; i < maxRetries; i++ {
+		//	for i := range maxRetries {
 		err := fn()
 		if err == nil {
 			return nil
 		}
+
+		lastErr = err
 
 		// Don't retry if error is not retryable (e.g., permission denied, not found)
 		if !isRetryable(err) {
@@ -53,7 +57,7 @@ func retryWithBackoff(ctx context.Context, fn func() error) error {
 		}
 	}
 
-	return fmt.Errorf("max retries exceeded")
+	return fmt.Errorf("max retries (%d) exceeded, last error: %w", maxRetries, lastErr)
 }
 
 // isRetryable determines if an error should trigger a retry.
