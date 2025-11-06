@@ -712,9 +712,9 @@ func TestNewPubSubClient(t *testing.T) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Auth package compiles: `go build ./internal/auth`
-- [ ] Unit tests pass: `go test ./internal/auth`
-- [ ] Clear error when ADC not configured
+- [x] Auth package compiles: `go build ./internal/auth`
+- [x] Unit tests pass: `go test ./internal/auth`
+- [x] Clear error when ADC not configured
 
 #### Manual Verification:
 - [ ] Can authenticate with ADC: `gcloud auth application-default login` then run tool
@@ -842,8 +842,8 @@ func (c *Collector) collectSubscriptions(ctx context.Context, client *pubsub.Cli
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Collector compiles: `go build ./internal/collector`
-- [ ] Unit tests with mocks pass: `go test ./internal/collector`
+- [x] Collector compiles: `go build ./internal/collector`
+- [x] Unit tests with mocks pass: `go test ./internal/collector`
 
 #### Manual Verification:
 - [ ] Can scan a single project successfully
