@@ -712,9 +712,9 @@ func TestNewPubSubClient(t *testing.T) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Auth package compiles: `go build ./internal/auth`
-- [ ] Unit tests pass: `go test ./internal/auth`
-- [ ] Clear error when ADC not configured
+- [x] Auth package compiles: `go build ./internal/auth`
+- [x] Unit tests pass: `go test ./internal/auth`
+- [x] Clear error when ADC not configured
 
 #### Manual Verification:
 - [ ] Can authenticate with ADC: `gcloud auth application-default login` then run tool
