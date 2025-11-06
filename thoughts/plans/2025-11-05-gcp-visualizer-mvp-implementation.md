@@ -842,8 +842,8 @@ func (c *Collector) collectSubscriptions(ctx context.Context, client *pubsub.Cli
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Collector compiles: `go build ./internal/collector`
-- [ ] Unit tests with mocks pass: `go test ./internal/collector`
+- [x] Collector compiles: `go build ./internal/collector`
+- [x] Unit tests with mocks pass: `go test ./internal/collector`
 
 #### Manual Verification:
 - [ ] Can scan a single project successfully
