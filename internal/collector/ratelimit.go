@@ -62,15 +62,9 @@ func (p *ProjectPool) CollectAll(ctx context.Context, collector *Collector) erro
 			p.semaphore <- struct{}{}
 			defer func() { <-p.semaphore }()
 
-			// Apply rate limiting before making API calls
-			// This respects GCP API quotas and prevents throttling
-			if err := p.rateLimiter.Wait(ctx); err != nil {
-				p.mu.Lock()
-				p.errors[pid] = fmt.Errorf("rate limiter error: %w", err)
-				p.mu.Unlock()
-				log.Printf("Failed to acquire rate limit for project %s: %v", pid, err)
-				return
-			}
+			// Note: Rate limiting is handled per-resource inside the collection loops
+			// (in collectTopics and collectSubscriptions) to accurately respect API quotas.
+			// The semaphore here only controls concurrent project collections.
 
 			// Collect project resources
 			if err := collector.CollectProject(ctx, pid); err != nil {
@@ -86,9 +80,16 @@ func (p *ProjectPool) CollectAll(ctx context.Context, collector *Collector) erro
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	// Return error if any projects failed, but include count for visibility
+	// Return error if any projects failed, including which projects for debugging
 	if len(p.errors) > 0 {
-		return fmt.Errorf("failed to collect %d projects", len(p.errors))
+		p.mu.Lock()
+		failedProjects := make([]string, 0, len(p.errors))
+		for pid := range p.errors {
+			failedProjects = append(failedProjects, pid)
+		}
+		p.mu.Unlock()
+
+		return fmt.Errorf("failed to collect %d projects: %v", len(p.errors), failedProjects)
 	}
 	return nil
 }

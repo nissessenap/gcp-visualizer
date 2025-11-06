@@ -25,7 +25,14 @@ func (c *Collector) collectTopics(ctx context.Context, client *pubsub.Client, pr
 			return fmt.Errorf("rate limiter error: %w", err)
 		}
 
-		topic, err := it.Next()
+		// Fetch next topic with retry logic for transient errors
+		var topic *pubsubpb.Topic
+		err := retryWithBackoff(ctx, func() error {
+			var iterErr error
+			topic, iterErr = it.Next()
+			return iterErr
+		})
+
 		if err == iterator.Done {
 			break
 		}
