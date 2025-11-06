@@ -111,14 +111,22 @@ func (c *Collector) Close() error {
 }
 
 // extractResourceName extracts the resource name from a full resource path.
-// It handles empty strings and edge cases correctly.
+// It returns the last non-empty segment of the path, making it safe for paths
+// with trailing slashes or empty segments.
+//
+// Returns empty string when:
+//   - Input is empty
+//   - Input contains only slashes
+//   - All segments are empty
+//
 // Examples:
 //   - "projects/my-project/topics/my-topic" -> "my-topic"
 //   - "projects/my-project/subscriptions/my-subscription" -> "my-subscription"
 //   - "simple-name" -> "simple-name"
 //   - "" -> ""
 //   - "/" -> ""
-//   - "projects/my-project/topics/" -> ""
+//   - "//" -> ""
+//   - "projects/my-project/topics/" -> "topics" (malformed path, returns last valid segment)
 func extractResourceName(fullPath string) string {
 	// Handle empty string explicitly
 	if fullPath == "" {

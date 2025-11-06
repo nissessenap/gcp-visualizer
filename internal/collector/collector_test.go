@@ -67,9 +67,9 @@ func TestExtractResourceName(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:     "trailing slash",
+			name:     "trailing slash (malformed path)",
 			input:    "projects/my-project/topics/",
-			expected: "topics",
+			expected: "topics", // Returns last valid segment
 		},
 		{
 			name:     "path with empty segments",
