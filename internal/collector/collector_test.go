@@ -61,6 +61,21 @@ func TestExtractResourceName(t *testing.T) {
 			input:    "",
 			expected: "",
 		},
+		{
+			name:     "single slash",
+			input:    "/",
+			expected: "",
+		},
+		{
+			name:     "trailing slash",
+			input:    "projects/my-project/topics/",
+			expected: "topics",
+		},
+		{
+			name:     "path with empty segments",
+			input:    "projects//topics/my-topic",
+			expected: "my-topic",
+		},
 	}
 
 	for _, tt := range tests {

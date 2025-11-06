@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -107,4 +108,32 @@ func (c *Collector) Close() error {
 		return fmt.Errorf("errors closing clients: %v", errs)
 	}
 	return nil
+}
+
+// extractResourceName extracts the resource name from a full resource path.
+// It handles empty strings and edge cases correctly.
+// Examples:
+//   - "projects/my-project/topics/my-topic" -> "my-topic"
+//   - "projects/my-project/subscriptions/my-subscription" -> "my-subscription"
+//   - "simple-name" -> "simple-name"
+//   - "" -> ""
+//   - "/" -> ""
+//   - "projects/my-project/topics/" -> ""
+func extractResourceName(fullPath string) string {
+	// Handle empty string explicitly
+	if fullPath == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullPath, "/")
+	// Return the last non-empty part
+	// This handles trailing slashes and empty segments correctly
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" {
+			return parts[i]
+		}
+	}
+
+	// If all parts are empty (e.g., "/" or "//"), return empty string
+	return ""
 }

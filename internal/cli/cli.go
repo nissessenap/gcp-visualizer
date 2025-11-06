@@ -17,6 +17,13 @@ type CLI struct {
 	Version  VersionCmd  `cmd:"version" help:"Show version"`
 }
 
+// Context returns the CLI's context for use by commands.
+// This allows commands to access the context without directly accessing
+// the unexported ctx field.
+func (c *CLI) Context() context.Context {
+	return c.ctx
+}
+
 type ScanCmd struct {
 	Projects []string `help:"Projects to scan" placeholder:"PROJECT_ID"`
 	Force    bool     `help:"Force refresh even if cached"`

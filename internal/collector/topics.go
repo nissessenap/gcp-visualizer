@@ -3,7 +3,6 @@ package collector
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
@@ -52,14 +51,4 @@ func (c *Collector) collectTopics(ctx context.Context, client *pubsub.Client, pr
 	}
 
 	return nil
-}
-
-// extractResourceName extracts the resource name from a full resource path
-// e.g., "projects/my-project/topics/my-topic" -> "my-topic"
-func extractResourceName(fullPath string) string {
-	parts := strings.Split(fullPath, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return fullPath
 }
